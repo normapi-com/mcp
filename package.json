@@ -1,0 +1,59 @@
+{
+  "name": "@normapi/mcp",
+  "version": "1.0.2",
+  "mcpName": "com.normapi/mcp",
+  "description": "MCP server for German e-invoices: validate and generate XRechnung and ZUGFeRD against the official KoSIT rules, with a plain-language explanation for every business-rule finding.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "xrechnung",
+    "zugferd",
+    "factur-x",
+    "en16931",
+    "e-rechnung",
+    "e-invoice",
+    "kosit"
+  ],
+  "homepage": "https://normapi.com/en/docs/mcp",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/normapi-com/mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/normapi-com/mcp/issues",
+    "email": "kontakt@normapi.de"
+  },
+  "license": "MIT",
+  "author": "Dmytro Yalanskyi",
+  "type": "module",
+  "bin": {
+    "normapi-mcp": "dist/stdio.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "tsc --noEmit",
+    "test": "node build.mjs && node --test test/*.test.mjs && vitest run",
+    "prepublishOnly": "pnpm check && pnpm test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.3.1",
+    "@normapi/client": "^0.4.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.0",
+    "@modelcontextprotocol/client": "2.3.1",
+    "vitest": "^4.1.10"
+  },
+  "packageManager": "pnpm@10.28.2"
+}
