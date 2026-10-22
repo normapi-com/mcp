@@ -4,4 +4,4 @@
  * serve the same tools. packages/mcp/package.json must carry the same value;
  * a test there says so.
  */
-export const MCP_SERVER_VERSION = '1.0.3'
+export const MCP_SERVER_VERSION = '1.1.0'

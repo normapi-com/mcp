@@ -96,8 +96,15 @@ const validationOutput = z.object({
   findings: z.array(findingOutput),
 })
 
+const profile = z
+  .enum(['xrechnung', 'en16931'])
+  .describe(
+    'xrechnung for public-sector buyers: it requires buyerReference (the Leitweg-ID), a seller contact and both electronic addresses. en16931 for businesses (§ 14 UStG accepts it), without those.',
+  )
+
 const generationOutput = z.object({
   syntax: z.enum(['ubl', 'cii', 'zugferd']),
+  profile,
   fileName: z.string(),
   mimeType: z.string(),
   bytes: z.number().int(),
@@ -110,7 +117,7 @@ const generationOutput = z.object({
     .string()
     .exactOptional()
     .describe(
-      'The XRechnung document; absent for the ZUGFeRD PDF, which is the attached resource',
+      'The XML document; absent for the ZUGFeRD PDF, which is the attached resource',
     ),
 })
 
@@ -127,6 +134,7 @@ const INSTRUCTIONS = [
   'NormAPI checks and produces German e-invoices (XRechnung in UBL or CII, ZUGFeRD/Factur-X PDF) against the official KoSIT rule set, and states the rule set version with every result.',
   'validate_invoice needs no account. Its verdict is `acceptable`; every business-rule finding carries a plain-language explanation (meaning, cause, fix) — quote the fix rather than paraphrasing the rule text.',
   "generate_invoice turns invoice data into a document that passed validation before it was returned. It needs the user's NormAPI account and counts against their monthly allowance, so build the invoice from data the user gave you and do not retry blindly: a refusal names the rules the data breaks.",
+  'Pick its profile by the recipient: xrechnung (the default) for a public-sector buyer, en16931 for a business, which then needs no Leitweg-ID, contact person or electronic addresses.',
   'explain_rule explains a rule code (e.g. BR-DE-15) the user already has.',
   'Invoices are processed in memory and never stored. This is technical validation, not tax or legal advice.',
 ].join('\n\n')
@@ -208,14 +216,15 @@ export function createNormapiServer(settings: ServerSettings): McpServer {
     {
       title: 'Generate an e-invoice',
       description:
-        "Produce an XRechnung (`ubl` or `cii` XML) or a ZUGFeRD hybrid PDF (`zugferd`) from invoice data. Totals are computed server-side in decimal arithmetic, and the document is validated against the official rules before it is returned. Data the rules do not permit is refused with the broken rules and how to fix each. Needs the user's NormAPI account; each document counts against the monthly allowance (50 free).",
+        "Produce an e-invoice as `ubl` or `cii` XML or a ZUGFeRD hybrid PDF (`zugferd`) from invoice data: an XRechnung for a public-sector buyer (profile `xrechnung`, the default), a plain EN 16931 invoice for a business (profile `en16931`). Totals are computed server-side in decimal arithmetic, and the document is validated against the official rules before it is returned. Data the rules do not permit is refused with the broken rules and how to fix each. Needs the user's NormAPI account; each document counts against the monthly allowance (50 free).",
       inputSchema: z.object({
         syntax: z
           .enum(['ubl', 'cii', 'zugferd'])
           .default('ubl')
           .describe(
-            'ubl or cii for XRechnung XML, zugferd for the PDF/A-3 with the invoice embedded',
+            'ubl or cii for XML, zugferd for the PDF/A-3 with the invoice embedded',
           ),
+        profile: profile.default('xrechnung'),
         invoice: invoiceSchema,
         language,
       }),
@@ -230,7 +239,7 @@ export function createNormapiServer(settings: ServerSettings): McpServer {
         ? {}
         : { scopeChallenge: settings.generateScopeChallenge }),
     },
-    async ({ syntax, invoice, language }) => {
+    async ({ syntax, profile, invoice, language }) => {
       if (!settings.canGenerate) {
         return failure(settings.missingKeyAdvice)
       }
@@ -238,10 +247,13 @@ export function createNormapiServer(settings: ServerSettings): McpServer {
       const base = fileBase(invoice.invoiceNumber)
       try {
         if (syntax === 'zugferd') {
-          const { pdf, rulesetVersion, scenario } =
-            await client.generateInvoicePdf(invoice)
+          const { pdf, rulesetVersion, scenario } = await client.generateInvoicePdf(
+            invoice,
+            { profile },
+          )
           const output = {
             syntax,
+            profile,
             fileName: `${base}.pdf`,
             mimeType: 'application/pdf',
             bytes: pdf.byteLength,
@@ -265,9 +277,11 @@ export function createNormapiServer(settings: ServerSettings): McpServer {
         }
         const { xml, rulesetVersion, scenario } = await client.generateInvoice(invoice, {
           syntax,
+          profile,
         })
         const output = {
           syntax,
+          profile,
           fileName: `${base}.xml`,
           mimeType: 'application/xml',
           bytes: new TextEncoder().encode(xml).byteLength,
@@ -438,8 +452,11 @@ export function describeValidation(view: ValidationView): string {
 type GenerationView = z.infer<typeof generationOutput>
 
 function describeGeneration(view: GenerationView): string {
+  const rules = view.profile === 'xrechnung' ? 'XRechnung' : 'EN 16931'
   const kind =
-    view.syntax === 'zugferd' ? 'ZUGFeRD PDF' : `XRechnung (${view.syntax.toUpperCase()})`
+    view.syntax === 'zugferd'
+      ? `ZUGFeRD PDF (${rules})`
+      : `${rules} (${view.syntax.toUpperCase()})`
   return [
     `Generated ${kind} ${view.fileName}, ${view.bytes} bytes. It passed ${view.scenario ?? 'the rules'} under rule set ${view.rulesetVersion ?? 'unknown'} before it was returned.`,
     view.syntax === 'zugferd'

@@ -82,11 +82,13 @@ const period = z
 
 const contact = z
   .object({
-    name: z.string().min(1).max(200).describe('BT-41'),
-    phone: z.string().min(1).max(50).describe('BT-42'),
-    email: z.string().min(1).max(254).describe('BT-43'),
+    name: z.string().max(200).exactOptional().describe('BT-41'),
+    phone: z.string().max(50).exactOptional().describe('BT-42'),
+    email: z.string().max(254).exactOptional().describe('BT-43'),
   })
-  .describe('BG-6. XRechnung requires all three on the seller (BR-DE-2, BR-DE-5 to 7).')
+  .describe(
+    'BG-6. XRechnung requires all three on the seller (BR-DE-2, BR-DE-5 to 7); EN 16931 none.',
+  )
 
 const party = z.object({
   name: z.string().min(1).max(200).describe('BT-27 / BT-44, the legal name'),
@@ -107,7 +109,9 @@ const party = z.object({
     .string()
     .max(254)
     .exactOptional()
-    .describe('BT-34 / BT-49, an email address unless a scheme says otherwise'),
+    .describe(
+      'BT-34 / BT-49, an email address unless a scheme says otherwise. XRechnung requires both (PEPPOL-EN16931-R020 seller, R010 buyer); EN 16931 neither.',
+    ),
   electronicAddressScheme: z
     .string()
     .regex(/^[0-9A-Z]{2,10}$/)
@@ -294,10 +298,10 @@ export const invoiceSchema = z.object({
     .describe('BT-5, ISO 4217, e.g. EUR'),
   buyerReference: z
     .string()
-    .min(1)
     .max(200)
+    .exactOptional()
     .describe(
-      'BT-10, mandatory in XRechnung (BR-DE-15): the Leitweg-ID for public-sector buyers, else the buyer reference',
+      'BT-10: the Leitweg-ID for public-sector buyers, else the buyer reference. Mandatory in XRechnung (BR-DE-15), optional in EN 16931.',
     ),
   orderReference: z
     .string()
@@ -313,7 +317,7 @@ export const invoiceSchema = z.object({
     .describe('BT-16, the delivery note (Lieferschein) number'),
   note: z.string().max(1000).exactOptional().describe('BT-22'),
   seller: party.describe(
-    'BG-4. Needs a VAT id or tax number (BR-DE-16) and a contact (BR-DE-2).',
+    'BG-4. Needs a VAT id or tax number (BR-DE-16); XRechnung also a contact (BR-DE-2).',
   ),
   buyer: party.describe('BG-7'),
   payment,

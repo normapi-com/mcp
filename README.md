@@ -33,7 +33,7 @@ process.
 | Tool | What it does | Key |
 |---|---|---|
 | `validate_invoice` | Checks XRechnung XML (text) or a ZUGFeRD PDF (base64): verdict, rule set version, every finding with its explanation | no |
-| `generate_invoice` | Builds XRechnung UBL/CII or a ZUGFeRD PDF from invoice data, validated before it is returned | yes |
+| `generate_invoice` | Builds XRechnung UBL/CII or a ZUGFeRD PDF from invoice data, validated before it is returned; `profile: "en16931"` makes an EN 16931 invoice for a business, without Leitweg-ID, contact person and electronic addresses | yes |
 | `explain_rule` | Explains a rule code such as BR-DE-15 | no |
 
 Invoices are processed in memory and never stored. Technical validation, not tax or

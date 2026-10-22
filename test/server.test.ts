@@ -306,7 +306,9 @@ describe('generate_invoice', () => {
       arguments: { syntax: 'cii', invoice },
     })
 
-    expect(calls[0]?.url).toBe('https://api.normapi.de/v1/invoices?syntax=cii')
+    expect(calls[0]?.url).toBe(
+      'https://api.normapi.de/v1/invoices?syntax=cii&profile=xrechnung',
+    )
     expect(new Headers(calls[0]?.init?.headers).get('Authorization')).toBe(
       'Bearer nk_live_test',
     )
@@ -319,6 +321,7 @@ describe('generate_invoice', () => {
     expect(view.isError).toBe(false)
     expect(view.structuredContent).toMatchObject({
       syntax: 'cii',
+      profile: 'xrechnung',
       fileName: 'RE-2026-0815.xml',
       rulesetVersion: 'v2026-01-31',
       xml,
@@ -329,9 +332,40 @@ describe('generate_invoice', () => {
     })
   })
 
+  /** A business needs none of what XRechnung adds, and the tool says which rules it met. */
+  it('makes an EN 16931 invoice for a business without reference or contact', async () => {
+    const { seller } = invoice
+    const business = {
+      ...Object.fromEntries(
+        Object.entries(invoice).filter(([key]) => key !== 'buyerReference'),
+      ),
+      seller: { name: seller.name, vatId: seller.vatId, address: seller.address },
+    }
+    const { client, calls } = await connect(
+      () =>
+        new Response('<Invoice/>', {
+          status: 200,
+          headers: { 'X-Normapi-Scenario': 'EN16931 (UBL Invoice)' },
+        }),
+    )
+
+    const result = await client.callTool({
+      name: 'generate_invoice',
+      arguments: { syntax: 'ubl', profile: 'en16931', invoice: business },
+    })
+
+    expect(calls[0]?.url).toBe(
+      'https://api.normapi.de/v1/invoices?syntax=ubl&profile=en16931',
+    )
+    const view = toolResult(result)
+    expect(view.isError).toBe(false)
+    expect(view.structuredContent).toMatchObject({ profile: 'en16931' })
+    expect(textOf(result)).toContain('Generated EN 16931 (UBL)')
+  })
+
   it('returns the ZUGFeRD PDF as a base64 resource', async () => {
     const bytes = new TextEncoder().encode('%PDF-1.7 hybrid')
-    const { client } = await connect(
+    const { client, calls } = await connect(
       () =>
         new Response(bytes, {
           status: 200,
@@ -344,6 +378,9 @@ describe('generate_invoice', () => {
       arguments: { syntax: 'zugferd', invoice },
     })
 
+    expect(calls[0]?.url).toBe(
+      'https://api.normapi.de/v1/invoices?syntax=zugferd&profile=xrechnung',
+    )
     const view = toolResult(result)
     expect(view.isError).toBe(false)
     expect(view.content[1]?.resource).toMatchObject({
