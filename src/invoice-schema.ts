@@ -71,6 +71,15 @@ const deliverTo = z
     'BG-13: where the supply went, when not simply to the buyer. Required for VAT category K: the country the goods went to (BR-IC-12).',
   )
 
+const period = z
+  .object({
+    startDate: date.exactOptional().describe('BT-73 / BT-134, YYYY-MM-DD'),
+    endDate: date.exactOptional().describe('BT-74 / BT-135, YYYY-MM-DD'),
+  })
+  .describe(
+    'A period: either end may stand alone (BR-CO-19, BR-CO-20); the end not before the start (BR-29, BR-30)',
+  )
+
 const contact = z
   .object({
     name: z.string().min(1).max(200).describe('BT-41'),
@@ -237,6 +246,12 @@ const line = z.object({
     .describe('BT-120; the rule set wants it for the exempt-family categories'),
   allowances: z.array(lineAllowanceCharge).max(20).exactOptional(),
   charges: z.array(lineAllowanceCharge).max(20).exactOptional(),
+  period: period.exactOptional().describe('BG-26, the period this line covers'),
+  orderLineReference: z
+    .string()
+    .max(50)
+    .exactOptional()
+    .describe("BT-132, the line of the buyer's purchase order this one bills"),
 })
 
 export const invoiceSchema = z.object({
@@ -264,8 +279,15 @@ export const invoiceSchema = z.object({
   dueDate: date
     .exactOptional()
     .describe('BT-9. XRechnung wants this or paymentTerms on a payable invoice.'),
-  deliveryDate: date.exactOptional().describe('BT-72. Omitting it draws an advisory.'),
+  deliveryDate: date
+    .exactOptional()
+    .describe('BT-72. Omitting it and invoicePeriod draws an advisory.'),
   deliverTo: deliverTo.exactOptional(),
+  invoicePeriod: period
+    .exactOptional()
+    .describe(
+      'BG-14, the period a monthly or yearly invoice covers, instead of deliveryDate or beside it',
+    ),
   currency: z
     .string()
     .regex(/^[A-Z]{3}$/)
@@ -277,6 +299,18 @@ export const invoiceSchema = z.object({
     .describe(
       'BT-10, mandatory in XRechnung (BR-DE-15): the Leitweg-ID for public-sector buyers, else the buyer reference',
     ),
+  orderReference: z
+    .string()
+    .max(100)
+    .exactOptional()
+    .describe("BT-13, the buyer's purchase order number"),
+  contractReference: z.string().max(100).exactOptional().describe('BT-12'),
+  projectReference: z.string().max(100).exactOptional().describe('BT-11'),
+  despatchAdviceReference: z
+    .string()
+    .max(100)
+    .exactOptional()
+    .describe('BT-16, the delivery note (Lieferschein) number'),
   note: z.string().max(1000).exactOptional().describe('BT-22'),
   seller: party.describe(
     'BG-4. Needs a VAT id or tax number (BR-DE-16) and a contact (BR-DE-2).',
