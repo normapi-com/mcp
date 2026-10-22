@@ -305,7 +305,9 @@ const line = z.object({
     .string()
     .regex(/^[0-9A-Z]{1,8}$/)
     .describe('BT-130, UN/ECE Rec 20: C62 piece, HUR hour, DAY day, KGM kilogram …'),
-  unitPrice: decimal('BT-146, net, up to four decimals'),
+  unitPrice: decimal(
+    'BT-146, net, up to four decimals; per baseQuantity units when one is given',
+  ),
   vatCategory,
   vatRate: decimal('BT-152, percent; required for category S').exactOptional(),
   vatExemptionReason: z
@@ -321,6 +323,33 @@ const line = z.object({
     .max(50)
     .exactOptional()
     .describe("BT-132, the line of the buyer's purchase order this one bills"),
+  note: z.string().max(1000).exactOptional().describe('BT-127, free text on this line'),
+  sellerItemId: z
+    .string()
+    .max(100)
+    .exactOptional()
+    .describe("BT-155, the seller's article number"),
+  buyerItemId: z
+    .string()
+    .max(100)
+    .exactOptional()
+    .describe("BT-156, the buyer's own number for the article"),
+  standardItemId: z
+    .string()
+    .max(100)
+    .exactOptional()
+    .describe('BT-157, e.g. the GTIN (EAN) on the packaging'),
+  standardItemIdScheme: z
+    .string()
+    .regex(/^[0-9]{4}$/)
+    .exactOptional()
+    .describe('BT-157-1, ISO 6523 ICD of standardItemId; 0160 (GTIN) when absent'),
+  listPrice: decimal(
+    'BT-148, the price before the price discount, at least unitPrice; the discount (BT-147) is listPrice − unitPrice',
+  ).exactOptional(),
+  baseQuantity: decimal(
+    'BT-149, how many units unitPrice and listPrice are for, e.g. 100 for a price per hundred; 1 when absent',
+  ).exactOptional(),
 })
 
 export const invoiceSchema = z.object({
