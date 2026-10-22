@@ -510,7 +510,9 @@ export function describeError(
       case 402:
         return "This month's generation allowance is used up, so no invoice was generated. Validation still works. The allowance renews with the month; a larger plan is at https://normapi.com/en/account/plan."
       case 413:
-        return 'The document is over the 5 MB limit.'
+        return action === 'generate'
+          ? 'The request is over the limits: a PDF of your own may be up to 5 MB, the invoice data 6 MB, and the attached files 3 MB of that together.'
+          : 'The document is over the 5 MB limit.'
       default:
         return error.detail !== ''
           ? `NormAPI could not ${action === 'explain' ? 'look up the rule' : `${action} this invoice`}: ${error.detail}`

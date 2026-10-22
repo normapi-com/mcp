@@ -119,6 +119,32 @@ const party = z.object({
     .describe('EAS code for the electronic address; EM (email) when absent'),
   address,
   contact: contact.exactOptional(),
+  tradingName: z
+    .string()
+    .max(200)
+    .exactOptional()
+    .describe('BT-28 / BT-45, the name the party trades under beside its legal name'),
+  registrationId: z
+    .string()
+    .max(100)
+    .exactOptional()
+    .describe(
+      'BT-30 / BT-47, the register entry, e.g. HRB 123456 for a GmbH; identifies a seller for BR-CO-26 like a VAT id does',
+    ),
+  registrationIdScheme: z
+    .string()
+    .regex(/^[0-9]{4}$/)
+    .exactOptional()
+    .describe(
+      'BT-30-1 / BT-47-1, ISO 6523 ICD of registrationId: none for a German register number, 0002 for a French SIREN',
+    ),
+  legalInformation: z
+    .string()
+    .max(1000)
+    .exactOptional()
+    .describe(
+      'BT-33, seller only: what company law wants on business letters beyond the name, e.g. "Sitz Berlin, Amtsgericht Charlottenburg · Geschäftsführer: Maria Muster" (§ 35a GmbHG)',
+    ),
 })
 
 const card = z
@@ -231,6 +257,45 @@ const lineAllowanceCharge = z
     'A line allowance (BG-27) or charge (BG-28); it changes the line net, in the line VAT category',
   )
 
+const attachment = z
+  .object({
+    id: z
+      .string()
+      .max(200)
+      .exactOptional()
+      .describe(
+        "BT-122, the document's number or name; the filename when absent (BR-52)",
+      ),
+    description: z.string().max(500).exactOptional().describe('BT-123'),
+    filename: z
+      .string()
+      .max(200)
+      .exactOptional()
+      .describe('BT-125-2, unique within the invoice (BR-DE-22)'),
+    mimeCode: z
+      .string()
+      .max(100)
+      .exactOptional()
+      .describe(
+        'BT-125-1, one of BR-CL-24: application/pdf, image/png, image/jpeg, text/csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.oasis.opendocument.spreadsheet',
+      ),
+    content: z
+      .base64()
+      .exactOptional()
+      .describe(
+        'BT-125, the file as base64, with filename and mimeCode; it must be of that type. At most 3 MB of files per invoice.',
+      ),
+    url: z
+      .string()
+      .max(2000)
+      .regex(/^https?:\/\/\S+$/)
+      .exactOptional()
+      .describe('BT-124, where the buyer can fetch the document'),
+  })
+  .describe(
+    'BG-24, a supporting document: a file inside the invoice (a timesheet, a delivery note), a link, or a reference alone',
+  )
+
 const line = z.object({
   id: z.string().max(50).exactOptional().describe('BT-126; assigned 1..n when absent'),
   name: z.string().min(1).max(200).describe('BT-153'),
@@ -315,6 +380,7 @@ export const invoiceSchema = z.object({
     .max(100)
     .exactOptional()
     .describe('BT-16, the delivery note (Lieferschein) number'),
+  attachments: z.array(attachment).max(20).exactOptional().describe('BG-24'),
   note: z.string().max(1000).exactOptional().describe('BT-22'),
   seller: party.describe(
     'BG-4. Needs a VAT id or tax number (BR-DE-16); XRechnung also a contact (BR-DE-2).',
