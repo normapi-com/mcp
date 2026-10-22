@@ -28,23 +28,48 @@ const vatCategory = z
 
 const address = z
   .object({
-    street: z.string().max(200).exactOptional().describe('BT-35 / BT-50'),
+    street: z.string().max(200).exactOptional().describe('BT-35 / BT-50 / BT-75'),
     city: z
       .string()
       .min(1)
       .max(100)
-      .describe('BT-37 / BT-52, mandatory (BR-DE-3, BR-DE-8)'),
+      .describe('BT-37 / BT-52 / BT-77, mandatory (BR-DE-3, BR-DE-8, BR-DE-10)'),
     postcode: z
       .string()
       .min(1)
       .max(20)
-      .describe('BT-38 / BT-53, mandatory (BR-DE-4, BR-DE-9)'),
+      .describe('BT-38 / BT-53 / BT-78, mandatory (BR-DE-4, BR-DE-9, BR-DE-11)'),
     country: z
       .string()
       .regex(/^[A-Z]{2}$/)
-      .describe('BT-40 / BT-55, ISO 3166-1 alpha-2, e.g. DE'),
+      .describe('BT-40 / BT-55 / BT-80, ISO 3166-1 alpha-2, e.g. DE'),
   })
-  .describe('BG-5 / BG-8')
+  .describe('BG-5 / BG-8 / BG-15')
+
+const deliverTo = z
+  .object({
+    name: z
+      .string()
+      .max(200)
+      .exactOptional()
+      .describe('BT-70, who received the goods: a branch, a warehouse, a site'),
+    locationId: z
+      .string()
+      .max(100)
+      .exactOptional()
+      .describe('BT-71, an identifier of the place, e.g. its GLN'),
+    locationIdScheme: z
+      .string()
+      .regex(/^[0-9]{4}$/)
+      .exactOptional()
+      .describe(
+        "BT-71-1, ISO 6523 ICD of locationId: 0088 for a GLN; absent means the seller's own",
+      ),
+    address: address.exactOptional().describe('BG-15, the delivery address'),
+  })
+  .describe(
+    'BG-13: where the supply went, when not simply to the buyer. Required for VAT category K: the country the goods went to (BR-IC-12).',
+  )
 
 const contact = z
   .object({
@@ -240,6 +265,7 @@ export const invoiceSchema = z.object({
     .exactOptional()
     .describe('BT-9. XRechnung wants this or paymentTerms on a payable invoice.'),
   deliveryDate: date.exactOptional().describe('BT-72. Omitting it draws an advisory.'),
+  deliverTo: deliverTo.exactOptional(),
   currency: z
     .string()
     .regex(/^[A-Z]{3}$/)

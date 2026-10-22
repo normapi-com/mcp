@@ -1,6 +1,6 @@
 {
   "name": "@normapi/mcp",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "mcpName": "com.normapi/mcp",
   "description": "MCP server for German e-invoices: validate and generate XRechnung and ZUGFeRD against the official KoSIT rules, with a plain-language explanation for every business-rule finding.",
   "keywords": [
