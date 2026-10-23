@@ -2,9 +2,9 @@
 
 [![NormAPI MCP connector](https://glama.ai/mcp/connectors/com.normapi/mcp/badges/score.svg)](https://glama.ai/mcp/connectors/com.normapi/mcp)
 
-MCP server for German e-invoices. Validate and generate **XRechnung** (UBL, CII) and
-**ZUGFeRD / Factur-X** against the official KoSIT rules from Claude, Cursor, VS Code or
-any MCP client. Every business-rule finding carries a plain-language explanation: what
+MCP server for German e-invoices. Validate, generate and read **XRechnung** (UBL, CII)
+and **ZUGFeRD / Factur-X** against the official KoSIT rules from Claude, Cursor, VS Code
+or any MCP client. Every business-rule finding carries a plain-language explanation: what
 the rule requires, why it typically fires, and how to fix it.
 
 The same server runs hosted at **https://normapi.com/mcp** (Streamable HTTP, OAuth or
@@ -33,6 +33,7 @@ process.
 | Tool | What it does | Key |
 |---|---|---|
 | `validate_invoice` | Checks XRechnung XML (text) or a ZUGFeRD PDF (base64): verdict, rule set version, every finding with its explanation | no |
+| `parse_invoice` | Reads a received invoice — XML (text) or a ZUGFeRD PDF (base64) — into data: the invoice in the shape `generate_invoice` takes, the totals as the document states them, and every value it did not carry, by path; `validate: true` adds the verdict | no |
 | `generate_invoice` | Builds XRechnung UBL/CII or a ZUGFeRD PDF from invoice data, validated before it is returned; `profile: "en16931"` makes an EN 16931 invoice for a business, without Leitweg-ID, contact person and electronic addresses; `attachments` carries a timesheet or other documents inside the invoice | yes |
 | `explain_rule` | Explains a rule code such as BR-DE-15 | no |
 
@@ -42,7 +43,8 @@ legal advice. Documentation: <https://normapi.com/en/docs/mcp>.
 ## Source
 
 <https://github.com/normapi-com/mcp> carries the source of each released version:
-`src/server.ts` defines the three tools, `src/stdio.ts` serves them over stdio. The tools
+`src/server.ts` defines the four tools, `src/api.ts` the calls they make, `src/stdio.ts`
+serves them over stdio. The tools
 are developed together with the hosted endpoint, so both always offer the same set.
 Issues and pull requests are welcome there.
 

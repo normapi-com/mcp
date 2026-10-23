@@ -1,5 +1,4 @@
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client'
-import { Normapi } from '@normapi/client'
 import { describe, expect, it } from 'vitest'
 import { createNormapiServer, documentFrom, type Language } from '../src/server'
 
@@ -66,8 +65,12 @@ async function connect(answer: Answer, options: { canGenerate?: boolean } = {}) 
   }
   const server = createNormapiServer({
     version: '0.0.0-test',
-    client: (language: Language) =>
-      new Normapi({ fetch: fetchImpl, language, apiKey: 'nk_live_test' }),
+    connection: (language: Language) => ({
+      baseUrl: 'https://api.normapi.de',
+      apiKey: 'nk_live_test',
+      language,
+      fetch: fetchImpl,
+    }),
     canGenerate: options.canGenerate ?? true,
     missingKeyAdvice: 'Set NORMAPI_API_KEY.',
   })
@@ -158,18 +161,21 @@ const invoice = {
 }
 
 describe('tool list', () => {
-  it('offers the three tools, read-only where they are', async () => {
+  it('offers the four tools, read-only where they are', async () => {
     const { client } = await connect(() => json(500, {}))
     const { tools } = await client.listTools()
 
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       'explain_rule',
       'generate_invoice',
+      'parse_invoice',
       'validate_invoice',
     ])
     const byName = new Map(tools.map((tool) => [tool.name, tool]))
     expect(byName.get('validate_invoice')?.annotations?.readOnlyHint).toBe(true)
     expect(byName.get('explain_rule')?.annotations?.readOnlyHint).toBe(true)
+    expect(byName.get('parse_invoice')?.annotations?.readOnlyHint).toBe(true)
+    expect(byName.get('parse_invoice')?.outputSchema).toBeDefined()
     expect(byName.get('generate_invoice')?.annotations?.readOnlyHint).toBe(false)
     expect(byName.get('generate_invoice')?.outputSchema).toBeDefined()
   })
@@ -262,6 +268,311 @@ describe('validate_invoice', () => {
 
     expect(toolResult(result).isError).toBe(true)
     expect(textOf(result)).toContain('17 seconds')
+  })
+})
+
+/** A real answer of POST /v1/parse: sample 01 of the library, its second line left out. */
+function parsedSample() {
+  return {
+    syntax: 'ubl',
+    documentKind: 'invoice',
+    source: {
+      kind: 'xml',
+      attachment: null,
+    },
+    specificationId:
+      'urn:cen.eu:en16931:2017#compliant#urn:xeinkauf.de:kosit:xrechnung_3.0',
+    businessProcess: 'urn:fdc:peppol.eu:2017:poacc:billing:01:1.0',
+    profile: 'xrechnung',
+    invoice: {
+      invoiceNumber: 'RE-2026-1001',
+      issueDate: '2026-10-01',
+      typeCode: '380',
+      precedingInvoices: [],
+      dueDate: '2026-10-31',
+      deliveryDate: '2026-09-28',
+      deliverTo: null,
+      invoicePeriod: null,
+      currency: 'EUR',
+      buyerReference: '4500012345',
+      orderReference: null,
+      contractReference: null,
+      projectReference: null,
+      despatchAdviceReference: null,
+      attachments: [],
+      note: 'Fiktive Beispielrechnung von NormAPI, frei nutzbar (CC0). Namen, Nummern und Konten sind erfunden.',
+      seller: {
+        name: 'Muster Software GmbH',
+        identifier: null,
+        vatId: 'DE123456789',
+        taxNumber: null,
+        electronicAddress: 'rechnung@muster-software.example',
+        electronicAddressScheme: 'EM',
+        address: {
+          street: 'Beispielstraße 12',
+          city: 'Berlin',
+          postcode: '10115',
+          country: 'DE',
+        },
+        contact: {
+          name: 'Maria Muster',
+          phone: '+49 30 1234567',
+          email: 'maria.muster@muster-software.example',
+        },
+        tradingName: null,
+        registrationId: null,
+        registrationIdScheme: null,
+        legalInformation: null,
+      },
+      buyer: {
+        name: 'Beispiel Handel AG',
+        identifier: null,
+        vatId: null,
+        taxNumber: null,
+        electronicAddress: 'einkauf@beispiel-handel.example',
+        electronicAddressScheme: 'EM',
+        address: {
+          street: 'Handelsweg 3',
+          city: 'Hamburg',
+          postcode: '20095',
+          country: 'DE',
+        },
+        contact: null,
+        tradingName: null,
+        registrationId: null,
+        registrationIdScheme: null,
+        legalInformation: null,
+      },
+      payment: {
+        meansCode: '58',
+        iban: 'DE17100500000123456789',
+        reference: 'RE-2026-1001',
+        meansText: null,
+        accountName: 'Muster Software GmbH',
+        bic: 'BELADEBEXXX',
+        card: null,
+        directDebit: null,
+      },
+      paymentTerms: 'Zahlbar innerhalb von 30 Tagen ohne Abzug.',
+      allowances: [],
+      charges: [],
+      prepaidAmount: null,
+      lines: [
+        {
+          id: '1',
+          name: 'Softwareentwicklung ERP-Schnittstelle',
+          description: 'Anbindung des Warenwirtschaftssystems, September 2026',
+          quantity: 24,
+          unit: 'HUR',
+          unitPrice: 95.0,
+          vatCategory: 'S',
+          vatRate: 19,
+          vatExemptionReason: null,
+          allowances: [],
+          charges: [],
+          period: null,
+          orderLineReference: null,
+          note: null,
+          sellerItemId: null,
+          buyerItemId: null,
+          standardItemId: null,
+          standardItemIdScheme: null,
+          listPrice: null,
+          baseQuantity: null,
+        },
+      ],
+    },
+    stated: {
+      lineTotal: '2940.00',
+      allowanceTotal: null,
+      chargeTotal: null,
+      netTotal: '2940.00',
+      vatTotal: '558.60',
+      vatAccountingCurrency: null,
+      vatTotalInAccountingCurrency: null,
+      grossTotal: '3498.60',
+      prepaidAmount: null,
+      roundingAmount: null,
+      amountDue: '3498.60',
+      vatBreakdown: [
+        {
+          category: 'S',
+          rate: '19.00',
+          taxableAmount: '2940.00',
+          vatAmount: '558.60',
+          exemptionReason: null,
+          exemptionReasonCode: null,
+        },
+      ],
+      lines: [
+        {
+          netAmount: '2280.00',
+          priceDiscount: null,
+          allowances: [],
+          charges: [],
+        },
+      ],
+      allowances: [],
+      charges: [],
+    },
+    notMapped: [],
+    validation: null,
+  }
+}
+
+describe('parse_invoice', () => {
+  it('reads the invoice into the shape generate_invoice takes', async () => {
+    const { client, calls } = await connect(() => json(200, parsedSample()))
+
+    const result = await client.callTool({
+      name: 'parse_invoice',
+      arguments: { xml: '<Invoice/>' },
+    })
+
+    expect(calls[0]?.url).toBe('https://api.normapi.de/v1/parse')
+    expect(calls[0]?.init?.body).toBe('<Invoice/>')
+    expect(new Headers(calls[0]?.init?.headers).get('Authorization')).toBe(
+      'Bearer nk_live_test',
+    )
+    const view = toolResult(result)
+    expect(view.isError).toBe(false)
+    expect(view.structuredContent).toMatchObject({
+      syntax: 'ubl',
+      profile: 'xrechnung',
+      readyToGenerate: true,
+      missingForGeneration: [],
+      validation: null,
+      stated: { grossTotal: '3498.60', amountDue: '3498.60' },
+    })
+    // Nulls and empty lists are gone: generate_invoice takes a field or its absence.
+    const structured = view.structuredContent
+    const invoice = JSON.stringify(
+      typeof structured === 'object' && structured !== null && 'invoice' in structured
+        ? structured.invoice
+        : null,
+    )
+    expect(invoice).toContain('"invoiceNumber":"RE-2026-1001"')
+    expect(invoice).not.toContain('"deliverTo"')
+    expect(invoice).not.toContain('"allowances"')
+    expect(invoice).not.toContain('null')
+    const text = textOf(result)
+    expect(text).toContain('Invoice RE-2026-1001 of 2026-10-01')
+    expect(text).toContain(
+      'Seller: Muster Software GmbH, VAT ID DE123456789, 10115 Berlin, DE',
+    )
+    expect(text).toContain('24 HUR × 95 = 2280.00, VAT S 19%')
+    expect(text).toContain('gross 3498.60')
+    expect(text).toContain('Not mapped: nothing')
+    expect(text).toContain(
+      'can be passed to generate_invoice as it is, with profile xrechnung',
+    )
+  })
+
+  it('hands what it read to generate_invoice, which takes it as it is', async () => {
+    const { client } = await connect(() => json(200, parsedSample()))
+    const parsed = toolResult(
+      await client.callTool({ name: 'parse_invoice', arguments: { xml: '<Invoice/>' } }),
+    ).structuredContent
+    const invoice =
+      typeof parsed === 'object' && parsed !== null && 'invoice' in parsed
+        ? parsed.invoice
+        : null
+    const generating = await connect(() => new Response('<Invoice/>', { status: 200 }))
+
+    const result = await generating.client.callTool({
+      name: 'generate_invoice',
+      arguments: { invoice },
+    })
+
+    expect(toolResult(result).isError).toBe(false)
+    const sent = generating.calls[0]?.init?.body
+    expect(typeof sent === 'string' ? JSON.parse(sent) : null).toMatchObject({
+      invoiceNumber: 'RE-2026-1001',
+      lines: [{ name: 'Softwareentwicklung ERP-Schnittstelle', unitPrice: 95 }],
+    })
+  })
+
+  it('names what is missing and what was not read', async () => {
+    const sample = parsedSample()
+    const { client } = await connect(() =>
+      json(200, {
+        ...sample,
+        invoice: {
+          ...sample.invoice,
+          invoiceNumber: null,
+          seller: { ...sample.invoice.seller, address: null },
+        },
+        notMapped: [
+          {
+            path: '/Invoice/cac:InvoiceLine/cac:Item/cac:CommodityClassification/cbc:ItemClassificationCode',
+            count: 3,
+          },
+        ],
+      }),
+    )
+
+    const result = await client.callTool({
+      name: 'parse_invoice',
+      arguments: { xml: '<Invoice/>' },
+    })
+
+    const view = toolResult(result)
+    expect(view.isError).toBe(false)
+    expect(view.structuredContent).toMatchObject({ readyToGenerate: false })
+    const text = textOf(result)
+    expect(text).toContain('(no number)')
+    expect(text).toContain('Before generate_invoice could take it: invoiceNumber')
+    expect(text).toContain('seller.address')
+    expect(text).toContain('cbc:ItemClassificationCode (3×)')
+  })
+
+  it('asks for the verdict on request and reports it', async () => {
+    const { client, calls } = await connect(() =>
+      json(200, { ...parsedSample(), validation: rejected }),
+    )
+
+    const result = await client.callTool({
+      name: 'parse_invoice',
+      arguments: { xml: '<Invoice/>', validate: true, language: 'de' },
+    })
+
+    expect(calls[0]?.url).toBe('https://api.normapi.de/v1/parse?validate=true')
+    expect(new Headers(calls[0]?.init?.headers).get('Accept-Language')).toBe('de')
+    expect(toolResult(result).structuredContent).toMatchObject({
+      validation: { acceptable: false, errors: 1 },
+    })
+    expect(textOf(result)).toContain(`Fix: ${explanation.fix}`)
+  })
+
+  it('passes on why a document is no invoice', async () => {
+    const { client } = await connect(() =>
+      json(422, {
+        detail:
+          'The root element is project (no namespace). An e-invoice is a UBL Invoice, a UBL CreditNote or a CII CrossIndustryInvoice.',
+      }),
+    )
+
+    const result = await client.callTool({
+      name: 'parse_invoice',
+      arguments: { xml: '<project/>' },
+    })
+
+    expect(toolResult(result).isError).toBe(true)
+    expect(textOf(result)).toContain(
+      'NormAPI could not read this invoice: The root element is project',
+    )
+  })
+
+  it('refuses an answer of another shape rather than guess', async () => {
+    const { client } = await connect(() => json(200, { ...parsedSample(), stated: null }))
+
+    const result = await client.callTool({
+      name: 'parse_invoice',
+      arguments: { xml: '<Invoice/>' },
+    })
+
+    expect(toolResult(result).isError).toBe(true)
+    expect(textOf(result)).toContain('did not have the shape')
   })
 })
 

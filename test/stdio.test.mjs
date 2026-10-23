@@ -2,11 +2,13 @@
 // over stdin and stdout. Run with `pnpm test`, which builds first.
 //
 // No network: the calls made here are the ones that must answer without the
-// API — the handshake, the tool list, and generation without a key.
+// API — the handshake, the tool list, and generation without a key — and one
+// that reaches a stand-in for it on this machine, through NORMAPI_BASE_URL.
 
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { readFileSync } from 'node:fs'
+import { createServer } from 'node:http'
 import { describe, it } from 'node:test'
 
 function start(env = {}) {
@@ -70,16 +72,42 @@ describe('npx @normapi/mcp', () => {
     }
   })
 
-  it('lists the three tools', async () => {
+  it('lists the four tools', async () => {
     const { child, request } = await initialized()
     try {
       const listed = await request('tools/list')
       assert.deepEqual(
         listed.result.tools.map((tool) => tool.name).sort(),
-        ['explain_rule', 'generate_invoice', 'validate_invoice'],
+        ['explain_rule', 'generate_invoice', 'parse_invoice', 'validate_invoice'],
       )
     } finally {
       child.kill()
+    }
+  })
+
+  it('reads an invoice at NORMAPI_BASE_URL, naming itself to the API', async () => {
+    const seen = []
+    const api = createServer((incoming, outgoing) => {
+      seen.push({ url: incoming.url, channel: incoming.headers['x-normapi-channel'], key: incoming.headers.authorization })
+      outgoing.writeHead(422, { 'Content-Type': 'application/json' })
+      outgoing.end(JSON.stringify({ status: 422, detail: 'The root element is project (no namespace).' }))
+    })
+    await new Promise((resolve) => api.listen(0, '127.0.0.1', resolve))
+    const { child, request } = await initialized({
+      NORMAPI_BASE_URL: `http://127.0.0.1:${api.address().port}`,
+      NORMAPI_API_KEY: 'nk_live_stdio',
+    })
+    try {
+      const called = await request('tools/call', {
+        name: 'parse_invoice',
+        arguments: { xml: '<project/>', validate: true },
+      })
+      assert.equal(called.result.isError, true)
+      assert.match(called.result.content[0].text, /could not read this invoice: The root element is project/)
+      assert.deepEqual(seen, [{ url: '/v1/parse?validate=true', channel: 'mcp-stdio', key: 'Bearer nk_live_stdio' }])
+    } finally {
+      child.kill()
+      api.close()
     }
   })
 

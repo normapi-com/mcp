@@ -6,17 +6,26 @@ import {
   RateLimitError,
   ValidatorBusyError,
   type Finding,
-  type Normapi,
   type ValidationResult,
 } from '@normapi/client'
 import { z } from 'zod'
+import {
+  clientFor,
+  notMappedSchema,
+  parseDocument,
+  statedSchema,
+  type ApiConnection,
+  type Language,
+  type ParsedInvoice,
+  type ParseResponse,
+} from './api'
 import { invoiceSchema } from './invoice-schema'
 
 // Relative imports only, and none from the app: the stdio package in
 // packages/mcp bundles this directory as it is.
 
 /**
- * The NormAPI MCP server: three tools over the public API, built once and
+ * The NormAPI MCP server: four tools over the public API, built once and
  * served two ways — over HTTP at normapi.com/mcp, and over stdio by the npm
  * package. What differs between the two (where the key comes from, what to
  * tell an agent that has none, how the API sees the caller) arrives through
@@ -24,7 +33,7 @@ import { invoiceSchema } from './invoice-schema'
  * in.
  */
 
-export type Language = 'de' | 'en'
+export type { ApiConnection, Language } from './api'
 
 /** The scope that lets a token generate invoices; validation needs none. */
 export const GENERATE_SCOPE = 'invoices:write'
@@ -34,8 +43,8 @@ const MAX_DOCUMENT_BYTES = 5 * 1024 * 1024
 
 export interface ServerSettings {
   readonly version: string
-  /** A client for one explanation language; it owns the base URL, the key and the headers. */
-  readonly client: (language: Language) => Normapi
+  /** The API for one explanation language: its base URL, the key and the fetch that adds the headers. */
+  readonly connection: (language: Language) => ApiConnection
   /** False when no key is available, so generation can answer with the remedy at once. */
   readonly canGenerate: boolean
   /** What an agent without a key is told to do — different over HTTP and over stdio. */
@@ -130,9 +139,58 @@ const ruleOutput = z.object({
   url: z.string(),
 })
 
+const parseOutput = z.object({
+  syntax: z.enum(['ubl', 'cii']),
+  documentKind: z
+    .enum(['invoice', 'creditNote'])
+    .describe('UBL says so by its root element; in CII the type code (BT-3) decides'),
+  source: z.object({
+    kind: z.enum(['xml', 'pdf']),
+    attachment: z
+      .string()
+      .nullable()
+      .describe('For a PDF, the embedded file the invoice was read from'),
+  }),
+  specificationId: z
+    .string()
+    .nullable()
+    .describe('BT-24, the rules the document declares'),
+  businessProcess: z.string().nullable().describe('BT-23'),
+  profile: profile
+    .nullable()
+    .describe(
+      'The generate_invoice profile that declares exactly this BT-24; null for any other declaration',
+    ),
+  invoice: z
+    .record(z.string(), z.unknown())
+    .describe(
+      'The invoice in the shape generate_invoice takes, with what the document lacks left out. Amounts are numbers; the exact decimals of the totals are in `stated`.',
+    ),
+  readyToGenerate: z
+    .boolean()
+    .describe("Whether `invoice` passes generate_invoice's schema as it is"),
+  missingForGeneration: z
+    .array(z.string())
+    .describe(
+      'What generate_invoice would refuse in `invoice`, field by field; empty when ready',
+    ),
+  stated: statedSchema,
+  notMapped: z
+    .array(notMappedSchema)
+    .describe(
+      'Every value of the document `invoice` and `stated` do not carry: a path without positions and how often. Empty for an invoice NormAPI generated.',
+    ),
+  validation: validationOutput
+    .nullable()
+    .describe(
+      'With validate: true, the verdict as validate_invoice returns it; otherwise null',
+    ),
+})
+
 const INSTRUCTIONS = [
-  'NormAPI checks and produces German e-invoices (XRechnung in UBL or CII, ZUGFeRD/Factur-X PDF) against the official KoSIT rule set, and states the rule set version with every result.',
+  'NormAPI checks, produces and reads German e-invoices (XRechnung in UBL or CII, ZUGFeRD/Factur-X PDF) against the official KoSIT rule set, and states the rule set version with every result.',
   'validate_invoice needs no account. Its verdict is `acceptable`; every business-rule finding carries a plain-language explanation (meaning, cause, fix) — quote the fix rather than paraphrasing the rule text.',
+  'parse_invoice needs no account either. It reads a received invoice into data: `invoice` in the shape generate_invoice takes, `stated` with the totals as the document wrote them, and `notMapped` naming every value it did not carry. Answer questions about an invoice from this data rather than from the raw XML, and say so when notMapped lists something relevant.',
   "generate_invoice turns invoice data into a document that passed validation before it was returned. It needs the user's NormAPI account and counts against their monthly allowance, so build the invoice from data the user gave you and do not retry blindly: a refusal names the rules the data breaks.",
   'Pick its profile by the recipient: xrechnung (the default) for a public-sector buyer, en16931 for a business, which then needs no Leitweg-ID, contact person or electronic addresses.',
   'explain_rule explains a rule code (e.g. BR-DE-15) the user already has.',
@@ -146,7 +204,7 @@ export function createNormapiServer(settings: ServerSettings): McpServer {
       title: 'NormAPI — German e-invoices',
       version: settings.version,
       description:
-        'Validate and generate XRechnung and ZUGFeRD e-invoices against the official KoSIT rules, with a plain-language explanation for every business-rule finding.',
+        'Validate, generate and read XRechnung and ZUGFeRD e-invoices against the official KoSIT rules, with a plain-language explanation for every business-rule finding.',
       websiteUrl: 'https://normapi.com/en/docs/mcp',
       icons: [
         {
@@ -197,9 +255,10 @@ export function createNormapiServer(settings: ServerSettings): McpServer {
         return failure(document.slice('refused:'.length))
       }
       try {
-        const result = await settings
-          .client(language)
-          .validate(document, fileName === undefined ? {} : { documentName: fileName })
+        const result = await clientFor(settings.connection(language)).validate(
+          document,
+          fileName === undefined ? {} : { documentName: fileName },
+        )
         const output = validationView(result)
         return {
           content: [{ type: 'text', text: describeValidation(output) }],
@@ -207,6 +266,61 @@ export function createNormapiServer(settings: ServerSettings): McpServer {
         }
       } catch (error) {
         return failure(describeError(error, 'validate'))
+      }
+    },
+  )
+
+  server.registerTool(
+    'parse_invoice',
+    {
+      title: 'Read an e-invoice into data',
+      description:
+        'Read a received e-invoice — XRechnung or any EN 16931 invoice as UBL or CII XML, or a ZUGFeRD/Factur-X PDF — into structured data. `invoice` is in exactly the shape generate_invoice takes (fields the document lacks are left out); `stated` has the totals, the VAT breakdown and each line net as the document states them, as exact decimal strings; `notMapped` lists by path every value of the document the data does not carry. Send the XML as text in `xml`, or the PDF base64-encoded in `pdfBase64` — exactly one. `validate: true` adds the KoSIT verdict. Free, no account needed, 5 MB at most.',
+      inputSchema: z.object({
+        xml: z
+          .string()
+          .max(MAX_DOCUMENT_BYTES)
+          .exactOptional()
+          .describe('The invoice XML as text'),
+        pdfBase64: z
+          .string()
+          .max(Math.ceil((MAX_DOCUMENT_BYTES * 4) / 3) + 4)
+          .exactOptional()
+          .describe('A ZUGFeRD or Factur-X PDF, base64-encoded'),
+        validate: z
+          .boolean()
+          .default(false)
+          .describe(
+            'Also check the invoice against the KoSIT rules and return the verdict',
+          ),
+        language,
+      }),
+      outputSchema: parseOutput,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ xml, pdfBase64, validate, language }) => {
+      const document = documentFrom(xml, pdfBase64)
+      if (typeof document === 'string' && document.startsWith('refused:')) {
+        return failure(document.slice('refused:'.length))
+      }
+      try {
+        const response = await parseDocument(
+          settings.connection(language),
+          document,
+          validate,
+        )
+        const output = parseView(response)
+        return {
+          content: [{ type: 'text', text: describeParse(output, response.invoice) }],
+          structuredContent: output,
+        }
+      } catch (error) {
+        return failure(describeError(error, 'parse'))
       }
     },
   )
@@ -243,7 +357,7 @@ export function createNormapiServer(settings: ServerSettings): McpServer {
       if (!settings.canGenerate) {
         return failure(settings.missingKeyAdvice)
       }
-      const client = settings.client(language)
+      const client = clientFor(settings.connection(language))
       const base = fileBase(invoice.invoiceNumber)
       try {
         if (syntax === 'zugferd') {
@@ -329,7 +443,7 @@ export function createNormapiServer(settings: ServerSettings): McpServer {
     },
     async ({ code, language }) => {
       try {
-        const rule = await settings.client(language).explainRule(code)
+        const rule = await clientFor(settings.connection(language)).explainRule(code)
         if (rule === null) {
           return failure(
             `No explained rule has the code ${code}. Codes look like BR-DE-15, BR-CO-10 or BR-S-08; schema findings (cvc-*) carry no explanation.`,
@@ -475,10 +589,166 @@ function describeRule(rule: z.infer<typeof ruleOutput>): string {
   ].join('\n')
 }
 
+const ACTION_WORDS: Record<'validate' | 'parse' | 'generate' | 'explain', string> = {
+  validate: 'validate this invoice',
+  parse: 'read this invoice',
+  generate: 'generate this invoice',
+  explain: 'look up the rule',
+}
+
+type ParseView = z.infer<typeof parseOutput>
+
+/** At most this many gaps are named; the first ones are what an agent fixes first. */
+const MAX_GAPS = 20
+
+/**
+ * The parse result as the tool returns it. The invoice loses its nulls and
+ * empty lists — generate_invoice's schema takes a field or its absence, never
+ * null — and is checked against that schema, so the agent learns up front
+ * whether it can be generated again and what is missing if not.
+ */
+export function parseView(response: ParseResponse): ParseView {
+  const invoice = withoutEmpty(response.invoice)
+  const checked = invoiceSchema.safeParse(invoice)
+  const gaps = checked.success ? [] : checked.error.issues.map(issueText)
+  return {
+    syntax: response.syntax,
+    documentKind: response.documentKind,
+    source: response.source,
+    specificationId: response.specificationId,
+    businessProcess: response.businessProcess,
+    profile: response.profile,
+    invoice,
+    readyToGenerate: checked.success,
+    missingForGeneration:
+      gaps.length > MAX_GAPS
+        ? [...gaps.slice(0, MAX_GAPS), `… and ${gaps.length - MAX_GAPS} more`]
+        : gaps,
+    stated: response.stated,
+    notMapped: response.notMapped,
+    validation: response.validation === null ? null : validationView(response.validation),
+  }
+}
+
+/** `lines[0].unit: Invalid input …` — the path the way a 400 from the API names it. */
+function issueText(issue: z.core.$ZodIssue): string {
+  const path = issue.path
+    .map((step, index) =>
+      typeof step === 'number' ? `[${step}]` : `${index === 0 ? '' : '.'}${String(step)}`,
+    )
+    .join('')
+  return path === '' ? issue.message : `${path}: ${issue.message}`
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** The object without its null fields and empty lists, all the way down. */
+function withoutEmpty(record: Record<string, unknown>): Record<string, unknown> {
+  const kept: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(record)) {
+    if (value === null || (Array.isArray(value) && value.length === 0)) continue
+    kept[key] = compacted(value)
+  }
+  return kept
+}
+
+function compacted(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(compacted)
+  return isRecord(value) ? withoutEmpty(value) : value
+}
+
+/** At most this many lines are listed in the text; the data has them all. */
+const MAX_LINES = 30
+
+/**
+ * The invoice as text, for the clients that hand the model only the text
+ * block: who, what, how much, and what was not read — the questions an agent
+ * is asked about a received invoice.
+ */
+export function describeParse(view: ParseView, invoice: ParsedInvoice): string {
+  const kind = view.documentKind === 'creditNote' ? 'credit note' : 'invoice'
+  const from =
+    view.source.kind === 'pdf'
+      ? `from the PDF's embedded ${view.source.attachment ?? 'XML'}`
+      : 'XML'
+  const lines: string[] = [
+    `Read a ${view.syntax.toUpperCase()} ${kind} (${from}), declaring ${view.specificationId ?? 'no specification'}${view.profile === null ? '' : ` — generate_invoice profile ${view.profile}`}.`,
+    `${kind === 'invoice' ? 'Invoice' : 'Credit note'} ${invoice.invoiceNumber ?? '(no number)'} of ${invoice.issueDate ?? '(no date)'}, type ${invoice.typeCode}, currency ${invoice.currency ?? '(none)'}${invoice.dueDate === null ? '' : `, due ${invoice.dueDate}`}.`,
+  ]
+  lines.push(`Seller: ${partyText(invoice.seller)}`, `Buyer: ${partyText(invoice.buyer)}`)
+  if (invoice.buyerReference !== null) {
+    lines.push(`Buyer reference: ${invoice.buyerReference}`)
+  }
+  if (invoice.payment !== null) {
+    const { meansCode, iban, reference } = invoice.payment
+    lines.push(
+      `Payment: means ${meansCode ?? '(none)'}${iban === null ? '' : `, IBAN ${iban}`}${reference === null ? '' : `, reference ${reference}`}`,
+    )
+  }
+  if (invoice.paymentTerms !== null) {
+    lines.push(`Terms: ${invoice.paymentTerms}`)
+  }
+  lines.push('', `Lines (${invoice.lines.length}):`)
+  invoice.lines.slice(0, MAX_LINES).forEach((line, index) => {
+    const net = view.stated.lines[index]?.netAmount ?? '?'
+    const rate = line.vatRate === null ? '' : ` ${line.vatRate}%`
+    lines.push(
+      `  ${line.id ?? index + 1}. ${line.name ?? '(no name)'} — ${line.quantity ?? '?'} ${line.unit ?? ''} × ${line.unitPrice ?? '?'} = ${net}, VAT ${line.vatCategory ?? '?'}${rate}`,
+    )
+  })
+  if (invoice.lines.length > MAX_LINES) {
+    lines.push(
+      `  … and ${invoice.lines.length - MAX_LINES} more in the structured result`,
+    )
+  }
+  const { stated } = view
+  lines.push(
+    '',
+    `Totals as stated: net ${stated.netTotal ?? '?'}, VAT ${stated.vatTotal ?? '?'}, gross ${stated.grossTotal ?? '?'}, due ${stated.amountDue ?? '?'}.`,
+  )
+  for (const group of stated.vatBreakdown) {
+    lines.push(
+      `VAT ${group.category ?? '?'} ${group.rate ?? '?'}%: ${group.vatAmount ?? '?'} on ${group.taxableAmount ?? '?'}${group.exemptionReason === null ? '' : ` (${group.exemptionReason})`}`,
+    )
+  }
+  lines.push('')
+  if (view.notMapped.length === 0) {
+    lines.push('Not mapped: nothing — every value of the document is in the result.')
+  } else {
+    lines.push('Not mapped — in the document, not in the result:')
+    for (const entry of view.notMapped) {
+      lines.push(`  ${entry.path}${entry.count > 1 ? ` (${entry.count}×)` : ''}`)
+    }
+  }
+  lines.push(
+    view.readyToGenerate
+      ? `The invoice can be passed to generate_invoice as it is${view.profile === null ? '' : `, with profile ${view.profile}`}.`
+      : `Before generate_invoice could take it: ${view.missingForGeneration.join('; ')}`,
+  )
+  if (view.validation !== null) {
+    lines.push('', describeValidation(view.validation))
+  }
+  return lines.join('\n')
+}
+
+function partyText(party: ParsedInvoice['seller']): string {
+  if (party === null) {
+    return '(none)'
+  }
+  const place =
+    party.address === null
+      ? ''
+      : `, ${[party.address.postcode, party.address.city].filter((part) => part !== null).join(' ')}${party.address.country === null ? '' : `, ${party.address.country}`}`
+  const vat = party.vatId === null ? '' : `, VAT ID ${party.vatId}`
+  return `${party.name ?? '(no name)'}${vat}${place}`
+}
+
 /** What went wrong, worded for an agent that has to decide what to do next. */
 export function describeError(
   error: unknown,
-  action: 'validate' | 'generate' | 'explain',
+  action: 'validate' | 'parse' | 'generate' | 'explain',
 ): string {
   if (error instanceof InvoiceNotPermittedError) {
     const view = validationView({
@@ -515,7 +785,7 @@ export function describeError(
           : 'The document is over the 5 MB limit.'
       default:
         return error.detail !== ''
-          ? `NormAPI could not ${action === 'explain' ? 'look up the rule' : `${action} this invoice`}: ${error.detail}`
+          ? `NormAPI could not ${ACTION_WORDS[action]}: ${error.detail}`
           : `NormAPI answered ${error.status}.`
     }
   }
